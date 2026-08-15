@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 """Centinela UAP: observador local y de solo lectura para publicaciones públicas.
 
 No publica, no comenta, no modera y no descarga archivos multimedia.
-Si Reddit indica que una publicación fue eliminada o retirada, purga su contenido
-local y conserva únicamente identificadores, fechas, estado y huella SHA-256.
+Si Reddit indica que una publicación fue eliminada o retirada, elimina
+completamente los registros locales asociados con esa publicación.
 """
 
 from __future__ import annotations
@@ -244,6 +243,20 @@ def datos_post(post: Any, subreddit: str) -> dict[str, Any]:
 
 def guardar(db: sqlite3.Connection, datos: dict[str, Any]) -> bool:
     instante = ahora_iso()
+
+    # Si Reddit informa que la publicación fue eliminada o retirada,
+    # borrar completamente cualquier registro local asociado.
+    if datos["estado"] != "publica":
+        db.execute(
+            "DELETE FROM observaciones WHERE id_publicacion = ?",
+            (datos["id"],),
+        )
+        db.execute(
+            "DELETE FROM publicaciones WHERE id = ?",
+            (datos["id"],),
+        )
+        return False
+        
     anterior = db.execute(
         "SELECT estado, huella_sha256 FROM publicaciones WHERE id = ?",
         (datos["id"],),
@@ -280,10 +293,7 @@ def guardar(db: sqlite3.Connection, datos: dict[str, Any]) -> bool:
             comentarios=excluded.comentarios,
             ultima_vista=excluded.ultima_vista,
             estado=excluded.estado,
-            huella_sha256=CASE
-                WHEN excluded.estado = 'publica' THEN excluded.huella_sha256
-                ELSE publicaciones.huella_sha256
-            END,
+            huella_sha256=excluded.huella_sha256,
             alertas=excluded.alertas
         """,
         {**datos, "primera_vista": instante, "ultima_vista": instante},
